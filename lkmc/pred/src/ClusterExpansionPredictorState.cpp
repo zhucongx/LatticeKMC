@@ -62,6 +62,208 @@ static void GetParametersMappingFromLatticeClusterVectorHelper(
   cluster_mapping.push_back(cluster_index_vector);
 }
 std::vector<std::vector<std::vector<size_t> > > GetClusterParametersMappingState(
+    const cfg::Config &config, const std::pair<size_t, size_t> &lattice_id_jump_pair) {
+  const auto lattice_vector = GetSortedLatticeVectorState(config, lattice_id_jump_pair);
+  std::vector<std::vector<std::vector<size_t> > > cluster_mapping{};
+  /// singlets
+  std::vector<Singlet_State_t> singlet_vector;
+  for (auto it1 = lattice_vector.cbegin(); it1 < lattice_vector.cend(); ++it1) {
+    singlet_vector.emplace_back(std::array<cfg::Lattice, 1>{*it1});
+  }
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(singlet_vector), cluster_mapping);
+  /// pairs
+  std::vector<Pair_State_t> first_pair_vector;
+  std::vector<Pair_State_t> second_pair_vector;
+  std::vector<Pair_State_t> third_pair_vector;
+  for (auto it1 = lattice_vector.cbegin(); it1 < lattice_vector.cend(); ++it1) {
+    const auto lattice1_index = it1->GetId();
+    for (const auto &lattice2_index: config.GetFirstNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      first_pair_vector.emplace_back(std::array<cfg::Lattice, 2>{*it1, *it2});
+    }
+    for (const auto &lattice2_index: config.GetSecondNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      second_pair_vector.emplace_back(std::array<cfg::Lattice, 2>{*it1, *it2});
+    }
+    for (const auto &lattice2_index: config.GetThirdNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      third_pair_vector.emplace_back(std::array<cfg::Lattice, 2>{*it1, *it2});
+    }
+  }
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_pair_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(second_pair_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(third_pair_vector), cluster_mapping);
+  /// triplets
+  std::vector<Triplet_State_t> first_first_first_triplets_vector;
+  std::vector<Triplet_State_t> first_first_second_triplets_vector;
+  std::vector<Triplet_State_t> first_first_third_triplets_vector;
+  std::vector<Triplet_State_t> first_second_third_triplets_vector;
+  std::vector<Triplet_State_t> first_third_third_triplets_vector;
+  std::vector<Triplet_State_t> second_third_third_triplets_vector;
+  std::vector<Triplet_State_t> third_third_third_triplets_vector;
+  for (auto it1 = lattice_vector.cbegin(); it1 < lattice_vector.cend(); ++it1) {
+    const auto lattice1_index = it1->GetId();
+    for (const auto &lattice2_index: config.GetFirstNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      for (const size_t lattice3_index: config.GetFirstNeighborsAdjacencyList()[lattice2_index]) {
+        if (lattice3_index == lattice1_index) { continue; }
+        if (lattice3_index == lattice2_index) { continue; }
+        auto it3 = std::find_if(lattice_vector.begin(),
+                                lattice_vector.end(),
+                                [lattice3_index](const auto &lattice) {
+                                  return lattice.GetId() == lattice3_index;
+                                });
+        if (it3 == lattice_vector.end()) { continue; }
+        if (std::find(config.GetFirstNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetFirstNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetFirstNeighborsAdjacencyList()[lattice1_index].end()) {
+          first_first_first_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+        if (std::find(config.GetSecondNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetSecondNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetSecondNeighborsAdjacencyList()[lattice1_index].end()) {
+          first_first_second_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+        if (std::find(config.GetThirdNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetThirdNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetThirdNeighborsAdjacencyList()[lattice1_index].end()) {
+          first_first_third_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+      }
+      for (const size_t lattice3_index: config.GetSecondNeighborsAdjacencyList()[lattice2_index]) {
+        if (lattice3_index == lattice1_index) { continue; }
+        if (lattice3_index == lattice2_index) { continue; }
+        auto it3 = std::find_if(lattice_vector.begin(),
+                                lattice_vector.end(),
+                                [lattice3_index](const auto &lattice) {
+                                  return lattice.GetId() == lattice3_index;
+                                });
+        if (it3 == lattice_vector.end()) { continue; }
+        if (std::find(config.GetThirdNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetThirdNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetThirdNeighborsAdjacencyList()[lattice1_index].end()) {
+          first_second_third_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+      }
+      for (const size_t lattice3_index: config.GetThirdNeighborsAdjacencyList()[lattice2_index]) {
+        if (lattice3_index == lattice1_index) { continue; }
+        if (lattice3_index == lattice2_index) { continue; }
+        auto it3 = std::find_if(lattice_vector.begin(),
+                                lattice_vector.end(),
+                                [lattice3_index](const auto &lattice) {
+                                  return lattice.GetId() == lattice3_index;
+                                });
+        if (it3 == lattice_vector.end()) { continue; }
+        if (std::find(config.GetThirdNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetThirdNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetThirdNeighborsAdjacencyList()[lattice1_index].end()) {
+          first_third_third_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+      }
+    }
+    for (const auto &lattice2_index: config.GetSecondNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      for (const size_t lattice3_index: config.GetThirdNeighborsAdjacencyList()[lattice2_index]) {
+        if (lattice3_index == lattice1_index) { continue; }
+        if (lattice3_index == lattice2_index) { continue; }
+        auto it3 = std::find_if(lattice_vector.begin(),
+                                lattice_vector.end(),
+                                [lattice3_index](const auto &lattice) {
+                                  return lattice.GetId() == lattice3_index;
+                                });
+        if (it3 == lattice_vector.end()) { continue; }
+        if (std::find(config.GetThirdNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetThirdNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetThirdNeighborsAdjacencyList()[lattice1_index].end()) {
+          second_third_third_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+      }
+    }
+    for (const auto &lattice2_index: config.GetThirdNeighborsAdjacencyList()[lattice1_index]) {
+      auto it2 = std::find_if(lattice_vector.begin(),
+                              lattice_vector.end(),
+                              [lattice2_index](const auto &lattice) {
+                                return lattice.GetId() == lattice2_index;
+                              });
+      if (it2 == lattice_vector.end()) { continue; }
+      for (const size_t lattice3_index: config.GetThirdNeighborsAdjacencyList()[lattice2_index]) {
+        if (lattice3_index == lattice1_index) { continue; }
+        if (lattice3_index == lattice2_index) { continue; }
+        auto it3 = std::find_if(lattice_vector.begin(),
+                                lattice_vector.end(),
+                                [lattice3_index](const auto &lattice) {
+                                  return lattice.GetId() == lattice3_index;
+                                });
+        if (it3 == lattice_vector.end()) { continue; }
+        if (std::find(config.GetThirdNeighborsAdjacencyList()[lattice1_index].begin(),
+                      config.GetThirdNeighborsAdjacencyList()[lattice1_index].end(),
+                      lattice3_index) !=
+            config.GetThirdNeighborsAdjacencyList()[lattice1_index].end()) {
+          third_third_third_triplets_vector.emplace_back(
+              std::array<cfg::Lattice, 3>{*it1, *it2, *it3});
+        }
+      }
+    }
+  }
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_first_first_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_first_second_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_first_third_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_second_third_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(first_third_third_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(second_third_third_triplets_vector), cluster_mapping);
+  GetParametersMappingFromLatticeClusterVectorHelper(
+      std::move(third_third_third_triplets_vector), cluster_mapping);
+  return cluster_mapping;
+}
+
+std::vector<std::vector<std::vector<size_t> > > GetClusterParametersMappingState(
     const cfg::Config &config) {
   const std::pair<size_t, size_t>
       lattice_id_jump_pair = {0, config.GetFirstNeighborsAdjacencyList()[0][0]};
@@ -318,6 +520,86 @@ std::vector<std::vector<std::vector<size_t> > > GetClusterParametersMappingState
   GetParametersMappingFromLatticeClusterVectorHelper(
       std::move(third_third_third_triplets_vector), cluster_mapping);
   return cluster_mapping;
+}
+
+std::array<std::vector<double>, 2> GetEncodesFromMapState(
+    const cfg::Config &config,
+    const std::pair<size_t, size_t> &lattice_id_jump_pair,
+    const std::unordered_map<ElementCluster,
+                             int,
+                             boost::hash<ElementCluster> > &initialized_cluster_hashmap,
+    const std::vector<std::vector<std::vector<size_t> > > &cluster_mapping) {
+  auto migration_element = config.GetElementAtLatticeId(lattice_id_jump_pair.second);
+  auto start_hashmap(initialized_cluster_hashmap);
+  auto end_hashmap(initialized_cluster_hashmap);
+  auto transition_hashmap(initialized_cluster_hashmap);
+
+  size_t label = 0;
+  for (const auto &cluster_vector: cluster_mapping) {
+    for (const auto &cluster: cluster_vector) {
+      std::vector<Element> element_vector_start, element_vector_end, element_vector_transition;
+      element_vector_start.reserve(cluster.size());
+      element_vector_end.reserve(cluster.size());
+      element_vector_transition.reserve(cluster.size());
+      for (auto lattice_id: cluster) {
+        element_vector_start.push_back(config.GetElementAtLatticeId(lattice_id));
+        if (lattice_id == lattice_id_jump_pair.first) {
+          element_vector_end.push_back(migration_element);
+          element_vector_transition.push_back(migration_element.GetPseudo());
+          continue;
+        } else if (lattice_id == lattice_id_jump_pair.second) {
+          element_vector_end.emplace_back(ElementType::X);
+          element_vector_transition.push_back(migration_element.GetPseudo());
+          continue;
+        }
+        element_vector_end.push_back(config.GetElementAtLatticeId(lattice_id));
+        element_vector_transition.push_back(config.GetElementAtLatticeId(lattice_id));
+      }
+      start_hashmap[ElementCluster(label, element_vector_start)]++;
+      end_hashmap[ElementCluster(label, element_vector_end)]++;
+      transition_hashmap[ElementCluster(label, element_vector_transition)]++;
+    }
+    label++;
+  }
+  std::map<ElementCluster, int>
+      ordered(initialized_cluster_hashmap.begin(), initialized_cluster_hashmap.end());
+  std::vector<double> de_encode, e0_encode;
+  de_encode.reserve(ordered.size());
+  e0_encode.reserve(ordered.size());
+  for (const auto &[cluster, count]: ordered) {
+    auto start = static_cast<double>(start_hashmap.at(cluster));
+    auto end = static_cast<double>(end_hashmap.at(cluster));
+    auto transition = static_cast<double>(transition_hashmap.at(cluster));
+    double total_bond{};
+    switch (cluster.GetLabel()) {
+      case 0:total_bond = 256;
+        break;
+      case 1: total_bond = 3072;
+        break;
+      case 2: total_bond = 1536;
+        break;
+      case 3: total_bond = 6144;
+        break;
+      case 4: total_bond = 12288;
+        break;
+      case 5: total_bond = 6144;
+        break;
+      case 6: total_bond = 12288;
+        break;
+      case 7: total_bond = 6144;
+        break;
+      case 8: total_bond = 12288;
+        break;
+      case 9: total_bond = 12288;
+        break;
+      case 10: total_bond = 12288;
+        break;
+    }
+    de_encode.push_back((end - start) / total_bond);
+    e0_encode.push_back((transition - 0.5 * (end + start)) / total_bond);
+  }
+  return {de_encode, e0_encode};
+
 }
 
 } // namespace pred

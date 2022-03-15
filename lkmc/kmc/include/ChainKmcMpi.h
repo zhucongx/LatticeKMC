@@ -1,35 +1,36 @@
-#ifndef LKMC_LKMC_KMC_INCLUDE_CHAINKMCSIMULATION_H_
-#define LKMC_LKMC_KMC_INCLUDE_CHAINKMCSIMULATION_H_
+#ifndef LKMC_LKMC_KMC_INCLUDE_CHAINKMCMPI_H_
+#define LKMC_LKMC_KMC_INCLUDE_CHAINKMCMPI_H_
 #include <random>
 #include <mpi.h>
 
-#include "EnergyPredictorE0DESymmetry.h"
-#include "EnergyPredictorE0DEBond.h"
-#include "EnergyPredictorE0DECluster.h"
-#include "EnergyPredictorE0DEState.h"
-#include "KmcEvent.h"
+#include "EnergyPredictorLru.h"
+#include "JumpEvent.h"
 namespace kmc {
-//  j -> k -> i ->l
+//  j -> k -> i -> l
 //       |
 // current position
-class ChainKMCSimulation {
+class ChainKmcMpi {
   public:
-    ChainKMCSimulation(cfg::Config config,
-                       unsigned long long int log_dump_steps,
-                       unsigned long long int config_dump_steps,
-                       unsigned long long int maximum_number,
-                       const std::set<Element> &type_set,
-                       unsigned long long int steps,
-                       double energy,
-                       double time,
-                       const std::string &json_parameters_filename);
-    virtual ~ChainKMCSimulation();
+    static constexpr double kBoltzmannConstant = 8.617333262145e-5;
+    static constexpr double kPrefactor = 1e14;
+
+    ChainKmcMpi(cfg::Config config,
+                unsigned long long int log_dump_steps,
+                unsigned long long int config_dump_steps,
+                unsigned long long int maximum_number,
+                double temperature,
+                const std::set<Element> &type_set,
+                unsigned long long int steps,
+                double energy,
+                double time,
+                const std::string &json_parameters_filename);
+    virtual ~ChainKmcMpi();
     virtual void Simulate();
 
   protected:
     virtual bool CheckAndSolveEquilibrium(std::ofstream &ofs) { return false; }
     inline void Dump(std::ofstream &ofs);
-    KMCEvent GetEventI();
+    JumpEvent GetEventI();
     [[nodiscard]] double BuildEventListParallel();
 
     std::vector<size_t> GetLIndexes();
@@ -44,6 +45,7 @@ class ChainKMCSimulation {
     const unsigned long long int log_dump_steps_;
     const unsigned long long int config_dump_steps_;
     const unsigned long long int maximum_number_;
+    const double beta_;
 
     // simulation statistics
     unsigned long long int steps_;
@@ -66,12 +68,12 @@ class ChainKMCSimulation {
     MPI_Group world_group_, first_group_, second_group_;
     MPI_Comm first_comm_, second_comm_;
 
-    std::vector<KMCEvent> event_list_{};
-    const pred::EnergyPredictorE0DEState energy_predictor_;
+    std::vector<JumpEvent> event_list_{};
+    const pred::EnergyPredictorLru energy_predictor_;
     mutable std::mt19937_64 generator_;
 };
 
 } // namespace kmc
 
 
-#endif //LKMC_LKMC_KMC_INCLUDE_CHAINKMCSIMULATION_H_
+#endif //LKMC_LKMC_KMC_INCLUDE_CHAINKMCMPI_H_

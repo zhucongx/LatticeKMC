@@ -1,84 +1,49 @@
 #include "EnergyPredictor.h"
 #include <utility>
 #include <boost/range/combine.hpp>
+#include <boost/functional/hash.hpp>
+
+#include <omp.h>
 #include <nlohmann/json.hpp>
+
 using json = nlohmann::json;
 
 namespace pred {
-std::unordered_map<std::string, std::vector<double> > GetOneHotEncodeHashmap(
-    const std::set<Element> &type_set) {
-  size_t type_size = type_set.size();
-  std::unordered_map<std::string, std::vector<double> > encode_dict;
 
-  size_t ct1 = 0;
+EnergyPredictor::EnergyPredictor(const std::string &predictor_filename,
+                                 const cfg::Config &reference_config,
+                                 const std::set<Element> &type_set):
+    cluster_mapping_(GetClusterParametersMappingState(reference_config)){
+  std::ifstream ifs(predictor_filename, std::ifstream::in);
+  json all_parameters;
+  ifs >> all_parameters;
+  for (const auto &[element, parameters]: all_parameters.items()) {
+    if (element == "Base") {
+      base_theta_ = std::vector<double>(parameters.at("theta"));
+      continue;
+    }
+    element_theta_[Element(element)] = std::vector<double>(parameters.at("theta"));
+  }
   for (const auto &element: type_set) {
-    std::vector<double> element_encode(type_size, 0);
-    element_encode[ct1] = 1.0;
-    encode_dict[element.GetString()] = element_encode;
-    ++ct1;
+    auto type_set_copy(type_set);
+    type_set_copy.emplace(ElementType::X);
+    type_set_copy.insert(element.GetPseudo());
+    element_initialized_cluster_hashmap_[element] = InitializeClusterHashMap(type_set_copy);
   }
 
-  size_t num_pairs = type_size * type_size;
-  size_t ct2 = 0;
-  for (const auto &element1: type_set) {
-    for (const auto &element2: type_set) {
-      std::vector<double> element_encode(num_pairs, 0);
-      element_encode[ct2] = 1.0;
-      encode_dict[element1.GetString() + element2.GetString()] = element_encode;
-      ++ct2;
+  for (size_t i = 0; i < reference_config.GetNumAtoms(); ++i) {
+    for (auto j: reference_config.GetFirstNeighborsAdjacencyList()[i]) {
+      auto sorted_lattice_vector =
+          GetSortedLatticeVectorState(reference_config, {i, j});
+      std::vector<size_t> lattice_id_vector;
+      std::transform(sorted_lattice_vector.begin(), sorted_lattice_vector.end(),
+                     std::back_inserter(lattice_id_vector),
+                     [](const auto &lattice) { return lattice.GetId(); });
+      site_bond_cluster_hashmap_[{i, j}] = lattice_id_vector;
     }
   }
-
-  size_t num_triplets = type_size * type_size * type_size;
-  size_t ct3 = 0;
-  for (const auto &element1: type_set) {
-    for (const auto &element2: type_set) {
-      for (const auto &element3: type_set) {
-        std::vector<double> element_encode(num_triplets, 0);
-        element_encode[ct3] = 1.0;
-        encode_dict[element1.GetString() + element2.GetString() + element3.GetString()] =
-            element_encode;
-        ++ct3;
-      }
-    }
-  }
-  return encode_dict;
-}
-std::vector<double> GetOneHotParametersFromMap(
-    const std::vector<Element> &encode,
-    const std::unordered_map<std::string, std::vector<double> > &one_hot_encode_hashmap,
-    size_t num_of_elements,
-    const std::vector<std::vector<std::vector<size_t> > > &cluster_mapping) {
-
-  std::vector<double> res_encode;
-  res_encode.reserve(354);
-
-  for (const auto &cluster_vector: cluster_mapping) {
-    std::vector<double> sum_of_list(
-        static_cast<size_t>(std::pow(num_of_elements, cluster_vector[0].size())), 0);
-    for (const auto &cluster: cluster_vector) {
-      std::string cluster_type;
-      for (auto index: cluster) {
-        cluster_type += encode[index].GetString();
-      }
-      const auto &cluster_one_hot_encode = one_hot_encode_hashmap.at(cluster_type);
-      std::transform(sum_of_list.begin(), sum_of_list.end(),
-                     cluster_one_hot_encode.begin(),
-                     sum_of_list.begin(),
-                     std::plus<>());
-    }
-    auto cluster_vector_size = static_cast<double>( cluster_vector.size());
-    std::for_each(sum_of_list.begin(),
-                  sum_of_list.end(),
-                  [cluster_vector_size](auto &n) { n /= cluster_vector_size; });
-
-    std::move(sum_of_list.begin(), sum_of_list.end(), std::back_inserter(res_encode));
-  }
-  return res_encode;
 }
 
-EnergyPredictor::EnergyPredictor(std::set<Element> type_set)
-    : type_set_(std::move(type_set)){}
 EnergyPredictor::~EnergyPredictor() = default;
 std::pair<double, double> EnergyPredictor::GetBarrierAndDiffFromAtomIdPair(
     const cfg::Config &config,
@@ -90,4 +55,94 @@ std::pair<double, double> EnergyPredictor::GetBarrierAndDiffFromAtomIdPair(
        config.GetLatticeIdFromAtomId(atom_id_jump_pair.second)});
 }
 
+std::pair<double, double> EnergyPredictor::GetBarrierAndDiffFromLatticeIdPair(
+    const cfg::Config &config,
+    const std::pair<size_t, size_t> &lattice_id_jump_pair) const {
+  auto migration_element = config.GetElementAtLatticeId(lattice_id_jump_pair.second);
+  const auto &lattice_id_vector = site_bond_cluster_hashmap_.at(lattice_id_jump_pair);
+  const auto &initialized_cluster_hashmap
+      = element_initialized_cluster_hashmap_.at(migration_element);
+
+  auto start_hashmap(initialized_cluster_hashmap);
+  auto end_hashmap(initialized_cluster_hashmap);
+  auto transition_hashmap(initialized_cluster_hashmap);
+  size_t label = 0;
+  for (const auto &cluster_vector: cluster_mapping_) {
+    for (const auto &cluster: cluster_vector) {
+      std::vector<Element> element_vector_start, element_vector_end, element_vector_transition;
+      element_vector_start.reserve(cluster.size());
+      element_vector_end.reserve(cluster.size());
+      element_vector_transition.reserve(cluster.size());
+      for (auto index: cluster) {
+        size_t lattice_id = lattice_id_vector[index];
+        element_vector_start.push_back(config.GetElementAtLatticeId(lattice_id));
+        if (lattice_id == lattice_id_jump_pair.first) {
+          element_vector_end.push_back(migration_element);
+          element_vector_transition.push_back(migration_element.GetPseudo());
+          continue;
+        } else if (lattice_id == lattice_id_jump_pair.second) {
+          element_vector_end.emplace_back(ElementType::X);
+          element_vector_transition.push_back(migration_element.GetPseudo());
+          continue;
+        }
+        element_vector_end.push_back(config.GetElementAtLatticeId(lattice_id));
+        element_vector_transition.push_back(config.GetElementAtLatticeId(lattice_id));
+      }
+      start_hashmap[ElementCluster(label, element_vector_start)]++;
+      end_hashmap[ElementCluster(label, element_vector_end)]++;
+      transition_hashmap[ElementCluster(label, element_vector_transition)]++;
+    }
+    label++;
+  }
+
+  std::map<ElementCluster, int>
+      ordered(initialized_cluster_hashmap.begin(), initialized_cluster_hashmap.end());
+  std::vector<double> de_encode, e0_encode;
+  de_encode.reserve(ordered.size());
+  e0_encode.reserve(ordered.size());
+  for (const auto &cluster_count: ordered) {
+    const auto &cluster = cluster_count.first;
+    auto start = static_cast<double>(start_hashmap.at(cluster));
+    auto end = static_cast<double>(end_hashmap.at(cluster));
+    auto transition = static_cast<double>(transition_hashmap.at(cluster));
+    double total_bond{};
+    switch (cluster.GetLabel()) {
+      case 0:total_bond = 256;
+        break;
+      case 1: total_bond = 3072;
+        break;
+      case 2: total_bond = 1536;
+        break;
+      case 3: total_bond = 6144;
+        break;
+      case 4: total_bond = 12288;
+        break;
+      case 5: total_bond = 6144;
+        break;
+      case 6: total_bond = 12288;
+        break;
+      case 7: total_bond = 6144;
+        break;
+      case 8: total_bond = 12288;
+        break;
+      case 9: total_bond = 12288;
+        break;
+      case 10: total_bond = 12288;
+        break;
+    }
+    de_encode.push_back((end - start) / total_bond);
+    e0_encode.push_back((transition - 0.5 * (end + start)) / total_bond);
+  }
+
+  const auto &theta_element = element_theta_.at(migration_element);
+  double e0 = 0, dE = 0;
+
+  const size_t cluster_size = theta_element.size();
+  for (size_t i = 0; i < cluster_size; ++i) {
+    dE += base_theta_[i] * de_encode[i];
+    e0 += theta_element[i] * e0_encode[i];
+  }
+
+  return {e0 + dE / 2, dE};
+}
 } // namespace pred

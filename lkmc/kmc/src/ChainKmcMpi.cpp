@@ -1,30 +1,32 @@
-#include "ChainKmcSimulation.h"
+#include "ChainKmcMpi.h"
 
 #include <utility>
 #include <chrono>
 #include <utility>
 namespace kmc {
 
-ChainKMCSimulation::ChainKMCSimulation(cfg::Config config,
-                                       unsigned long long int log_dump_steps,
-                                       unsigned long long int config_dump_steps,
-                                       unsigned long long int maximum_number,
-                                       const std::set<Element> &type_set,
-                                       unsigned long long int steps,
-                                       double energy,
-                                       double time,
-                                       const std::string &json_parameters_filename)
+ChainKmcMpi::ChainKmcMpi(cfg::Config config,
+                         unsigned long long int log_dump_steps,
+                         unsigned long long int config_dump_steps,
+                         unsigned long long int maximum_number,
+                         double temperature,
+                         const std::set<Element> &type_set,
+                         unsigned long long int steps,
+                         double energy,
+                         double time,
+                         const std::string &json_parameters_filename)
     : config_(std::move(config)),
       log_dump_steps_(log_dump_steps),
       config_dump_steps_(config_dump_steps),
       maximum_number_(maximum_number),
+      beta_(1 / kBoltzmannConstant / temperature),
       steps_(steps),
       energy_(energy),
       time_(time),
       vacancy_index_(cfg::GetVacancyAtomIndex(config_)),
       previous_j_(config_.GetFirstNeighborsAtomIdVectorOfAtom(vacancy_index_)[0]),
       energy_predictor_(json_parameters_filename,
-                        config_, type_set),
+                        config_, type_set, 10000),
       generator_(static_cast<unsigned long long int>(
                      std::chrono::system_clock::now().time_since_epoch().count())) {
   event_list_.resize(kFirstEventListSize);
@@ -64,14 +66,14 @@ ChainKMCSimulation::ChainKMCSimulation(cfg::Config config,
     std::cout << "Using " << world_size << " processes." << std::endl;
   }
 }
-ChainKMCSimulation::~ChainKMCSimulation() {
+ChainKmcMpi::~ChainKmcMpi() {
   if (MPI_GROUP_NULL != first_group_) MPI_Group_free(&first_group_);
   if (MPI_GROUP_NULL != second_group_) MPI_Group_free(&second_group_);
   if (MPI_COMM_NULL != first_comm_) MPI_Comm_free(&first_comm_);
   if (MPI_COMM_NULL != second_comm_) MPI_Comm_free(&second_comm_);
   MPI_Finalize();
 }
-void ChainKMCSimulation::Dump(std::ofstream &ofs) {
+void ChainKmcMpi::Dump(std::ofstream &ofs) {
   if (steps_ % log_dump_steps_ == 0) {
     ofs << steps_ << '\t' << time_ << '\t' << energy_ << '\t' << one_step_barrier_ << '\t'
         << one_step_energy_change_ << std::endl;
@@ -81,21 +83,22 @@ void ChainKMCSimulation::Dump(std::ofstream &ofs) {
   }
 }
 
-// get the energy change and the probability from j to k, pjk by the reference.
+// Get the energy change and the probability from j to k, pjk by the reference.
 // And return the index of j and k. Only applied to 12 sub-primary processes.
 // And then pass to others, now we will have 12 different numbers for 12 different second groups.
-KMCEvent ChainKMCSimulation::GetEventI() {
-  KMCEvent event_i;
+JumpEvent ChainKmcMpi::GetEventI() {
+  JumpEvent event_i;
   if (first_comm_ != MPI_COMM_NULL) {
     total_rate_k_ = 0;
 
     const auto i_index = config_.GetFirstNeighborsAtomIdVectorOfAtom(
         vacancy_index_)[static_cast<size_t>(first_group_rank_)];
 
-    event_i = KMCEvent(
+    event_i = JumpEvent(
         {vacancy_index_, i_index},
         energy_predictor_.GetBarrierAndDiffFromAtomIdPair(config_,
-                                                          {vacancy_index_, i_index}));
+                                                          {vacancy_index_, i_index}),
+        beta_);
 
     const double first_rate = event_i.GetForwardRate();
     MPI_Allreduce(&first_rate, &total_rate_k_, 1, MPI_DOUBLE, MPI_SUM, first_comm_);
@@ -103,12 +106,12 @@ KMCEvent ChainKMCSimulation::GetEventI() {
 // MPI_Allgather(&first_probability_, 1, MPI_DOUBLE, probability_list_.data(), 1, MPI_DOUBLE, first_comm_);
   }
 
-  MPI_Bcast(&event_i, sizeof(KMCEvent), MPI_BYTE, 0, second_comm_);
+  MPI_Bcast(&event_i, sizeof(JumpEvent), MPI_BYTE, 0, second_comm_);
   return event_i;
 }
 
 // Return the indexed of the corresponding second neighbors
-std::vector<size_t> ChainKMCSimulation::GetLIndexes() {
+std::vector<size_t> ChainKmcMpi::GetLIndexes() {
   std::vector<size_t> l_indexes;
   l_indexes.reserve(kSecondEventListSize);
   if (first_comm_ != MPI_COMM_NULL) {
@@ -130,7 +133,7 @@ std::vector<size_t> ChainKMCSimulation::GetLIndexes() {
             second_comm_);
   return l_indexes;
 }
-double ChainKMCSimulation::BuildEventListParallel() {
+double ChainKmcMpi::BuildEventListParallel() {
   // double first_probability, first_energy_change, first_back_rate;
   auto event_k_i = GetEventI();
   const auto l_indexes = GetLIndexes();
@@ -138,14 +141,15 @@ double ChainKMCSimulation::BuildEventListParallel() {
   config_.AtomJump(event_k_i.GetAtomIdJumpPair());
   total_rate_i_ = 0.0;
   const auto l_index = l_indexes[static_cast<size_t>(second_group_rank_)];
-  KMCEvent event_i_l
+  JumpEvent event_i_l
       ({vacancy_index_, l_index},
        energy_predictor_.GetBarrierAndDiffFromAtomIdPair(config_,
-                                                         {vacancy_index_, l_index}));
+                                                         {vacancy_index_, l_index}),
+       beta_);
   config_.AtomJump(event_k_i.GetAtomIdJumpPair());
 
   // get sum r_{k to l}
-  const double r_i_l = event_i_l.GetForwardRate();
+  const auto r_i_l = event_i_l.GetForwardRate();
   MPI_Allreduce(&r_i_l, &total_rate_i_, 1, MPI_DOUBLE, MPI_SUM, second_comm_);
   const auto r_i_k = event_k_i.GetBackwardRate();
   total_rate_i_ += r_i_k;
@@ -186,10 +190,10 @@ double ChainKMCSimulation::BuildEventListParallel() {
       event_k_i.SetProbability(indirect_probability_k_i);
     }
     MPI_Allgather(&event_k_i,
-                  sizeof(KMCEvent),
+                  sizeof(JumpEvent),
                   MPI_BYTE,
                   event_list_.data(),
-                  sizeof(KMCEvent),
+                  sizeof(JumpEvent),
                   MPI_BYTE,
                   first_comm_);
 
@@ -200,8 +204,8 @@ double ChainKMCSimulation::BuildEventListParallel() {
       event.SetCumulativeProvability(cumulative_provability);
     }
 
-    double t = 1 / total_rate_k_ / KMCEvent::kPrefactor;
-    double t_i = 1 / total_rate_i_ / KMCEvent::kPrefactor;
+    double t = 1 / total_rate_k_ / kPrefactor;
+    double t_i = 1 / total_rate_i_ / kPrefactor;
     double ts_numerator = 0.0, ts_j_numerator = 0.0;
     double ts_numerator_helper = (t + t_i) * beta_bar_k_i;
     MPI_Allreduce(&ts_numerator_helper, &ts_numerator, 1, MPI_DOUBLE, MPI_SUM, first_comm_);
@@ -219,7 +223,7 @@ double ChainKMCSimulation::BuildEventListParallel() {
   return t_2;
 }
 // run this on this first process
-size_t ChainKMCSimulation::SelectEvent() const {
+size_t ChainKmcMpi::SelectEvent() const {
   static std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
   const double random_number = distribution(generator_);
@@ -236,7 +240,7 @@ size_t ChainKMCSimulation::SelectEvent() const {
   return static_cast<size_t>(std::distance(event_list_.begin(), it));
 }
 
-void ChainKMCSimulation::Simulate() {
+void ChainKmcMpi::Simulate() {
   std::ofstream ofs("kmc_log.txt", std::ofstream::out | std::ofstream::app);
   if (world_rank_ == 0) {
     ofs << "steps\ttime\tenergy\tEa\tdE\n";
@@ -250,14 +254,11 @@ void ChainKMCSimulation::Simulate() {
     MPI_Barrier(MPI_COMM_WORLD);
 
     one_step_time_change_ = BuildEventListParallel();
-    KMCEvent selected_event;
+    JumpEvent selected_event;
     if (world_rank_ == 0) {
       selected_event = event_list_[SelectEvent()];
-      static std::uniform_real_distribution<double> distribution(0.0, 1.0);
-      one_step_energy_change_ *= distribution(generator_);
     }
-    MPI_Bcast(&selected_event, sizeof(KMCEvent), MPI_BYTE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&one_step_energy_change_, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&selected_event, sizeof(JumpEvent), MPI_BYTE, 0, MPI_COMM_WORLD);
 
     atom_id_jump_pair_ = selected_event.GetAtomIdJumpPair();
 

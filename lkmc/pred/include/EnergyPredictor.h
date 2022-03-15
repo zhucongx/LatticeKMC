@@ -5,10 +5,14 @@
 #include <boost/functional/hash.hpp>
 #include "Config.h"
 #include "ClusterExpansionPredictor.h"
+#include "ElementCluster.hpp"
 namespace pred {
+
 class EnergyPredictor {
   public:
-    explicit EnergyPredictor(std::set<Element> type_set);
+    EnergyPredictor(const std::string &predictor_filename,
+                    const cfg::Config &reference_config,
+                    const std::set<Element> &type_set);
     virtual ~EnergyPredictor();
     [[nodiscard]] std::pair<double, double> GetBarrierAndDiffFromAtomIdPair(
         const cfg::Config &config,
@@ -16,24 +20,19 @@ class EnergyPredictor {
   protected:
     [[nodiscard]] virtual std::pair<double, double> GetBarrierAndDiffFromLatticeIdPair(
         const cfg::Config &config,
-        const std::pair<size_t, size_t> &atom_id_jump_pair) const = 0;
-    std::set<Element> type_set_;
-};
-struct ParametersE0 {
-  std::vector<double> mu_x{};
-  std::vector<double> sigma_x{};
-  double mu_y{};
-  double sigma_y{};
-  std::vector<std::vector<double> > U{};
-  std::vector<double> theta{};
-};
-struct ParametersDE {
-  std::vector<double> mu_x{};
-  std::vector<double> sigma_x{};
-  double mu_y{};
-  double sigma_y{};
-  std::vector<std::vector<double> > U{};
-  std::vector<double> theta{};
+        const std::pair<size_t, size_t> &lattice_id_jump_pair) const;
+    const std::vector<std::vector<std::vector<size_t> > > cluster_mapping_{};
+    std::unordered_map<std::pair<size_t, size_t>,
+                       std::vector<size_t>,
+                       boost::hash<std::pair<size_t, size_t> > > site_bond_cluster_hashmap_;
+    std::vector<double> base_theta_{};
+    std::unordered_map<Element,
+                       std::vector<double>,
+                       boost::hash<Element> > element_theta_;
+    std::unordered_map<Element,
+                       std::unordered_map<ElementCluster, int,
+                                          boost::hash<ElementCluster> >,
+                       boost::hash<Element> > element_initialized_cluster_hashmap_;
 };
 } // namespace pred
 

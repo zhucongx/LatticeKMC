@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 ########################################## SET  COMPILERS ##########################################
-set(CMAKE_C_COMPILER "mpicc") # {gcc, clang, mpicc, icc}
-set(CMAKE_CXX_COMPILER "mpicxx") # {g++, clang++, mpicxx, icpc}
+set(CMAKE_C_COMPILER "gcc") # {gcc, clang, mpicc, icc}
+set(CMAKE_CXX_COMPILER "g++") # {g++, clang++, mpicxx, icpc}
 project(LKMC)
 set(CMAKE_CXX_STANDARD 20)
 ############################################ SET  PATHS ############################################
@@ -84,6 +84,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "lkmc.exe")
 find_package(Boost REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE ${Boost_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE ${Boost_LIBRARIES})
+############################################### MPI ################################################
+find_package(MPI REQUIRED)
+target_link_libraries(${PROJECT_NAME} PUBLIC MPI::MPI_CXX)
+############################################## OPENMP ##############################################
+find_package(OpenMP REQUIRED)
+target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
 ############################################### JSON ###############################################
 # Typically you don't care so much for a third party library's tests to be
 # run from your own project's code.
@@ -104,32 +110,6 @@ if(NOT json_POPULATED)
     add_subdirectory(${json_SOURCE_DIR} ${json_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
-############################################### MPI ################################################
-#find_package(MPI REQUIRED)
-## include directories
-#target_include_directories(${PROJECT_NAME} INTERFACE
-#        ${MPI_C_INCLUDE_DIRS} ${MPI_CXX_INCLUDE_DIRS})
-## link libraries
-#target_link_libraries(${PROJECT_NAME} INTERFACE
-#        ${MPI_C_LIBRARIES} ${MPI_CXX_LIBRARIES})
-## set interface target compile options
-#target_compile_options(${PROJECT_NAME} INTERFACE
-#        "${MPI_C_COMPILE_DEFINITIONS} ${MPI_CXX_COMPILE_DEFINITIONS}")
-#target_compile_options(${PROJECT_NAME} INTERFACE
-#        "${MPI_C_COMPILE_OPTIONS} ${MPI_CXX_COMPILE_OPTIONS}")
-#set_target_properties(${PROJECT_NAME} PROPERTIES
-#        INTERFACE_LINK_OPTIONS "${MPI_C_LINK_FLAGS} ${MPI_CXX_LINK_FLAGS}")
-############################################## OPENMP ##############################################
-#find_package(OpenMP REQUIRED)
-## include directories
-#target_include_directories(${PROJECT_NAME} INTERFACE
-#        ${OpenMP_C_INCLUDE_DIRS} ${OpenMP_CXX_INCLUDE_DIRS})
-## link libraries
-#target_link_libraries(${PROJECT_NAME} INTERFACE
-#        ${OpenMP_C_LIBRARIES} ${OpenMP_CXX_LIBRARIES})
-## set interface target compile options
-#target_compile_options(${PROJECT_NAME} INTERFACE
-#        "${OpenMP_C_FLAGS} ${OpenMP_CXX_FLAGS}")
 ############################################ ARMADILLO #############################################
 #find_package(ARMADILLO REQUIRED)
 #target_include_directories(${PROJECT_NAME} PUBLIC

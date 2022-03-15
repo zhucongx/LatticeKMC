@@ -8,6 +8,7 @@
 enum class ElementType {
   X, Al, Mg, Zn, Cu, Sn, pAl, pMg, pZn, pCu, pSn
 };
+
 class Element {
   public:
     Element() = default;
